@@ -34,24 +34,27 @@
   - **멀티플레이어 수면 동기화**: 모든 플레이어가 침대에 누워야만 시간이 빠르게 흐르고 다음 날로 넘어가는 로직을 구현했습니다. `CheckAllPlayerIsLieInBed` 함수를 통해 모든 플레이어의 상태를 확인하고, 서버에서 시간을 변경한 후 클라이언트에 동기화합니다.
   - **상호작용 및 시네마틱**: 플레이어가 `ABed` 액터와 상호작용하면 `SleepManager`가 이를 감지하여 수면 프로세스를 시작하도록 구현했으며, 수면 시 간단한 시네마틱을 재생하여 몰입감을 높였습니다.
 
-#### **코드 예시: 시간 델리게이트 선언**
-```cpp
-// TimeManager.h
-// 특정 시간에 도달했을 때 다른 시스템에 이를 알리기 위한 델리게이트
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnContentRestrictionTimeReached);
+#### **상호작용 시퀀스 다이어그램**
 
-// ...
-public:
-    UPROPERTY()
-    FOnContentRestrictionTimeReached OnContentRestrictionTimeReached;
+```mermaid
+sequenceDiagram
+    participant Player as Player
+    participant Bed as ABed
+    participant SleepManager as USleepManager
+    participant TimeManager as ATimeManager
+
+    Player->>Bed: 1. 상호작용 (F 키 입력)
+    Bed->>Player: 2. GA_BedInteract 어빌리티 활성화
+    Player->>SleepManager: 3. RequestSleep(Player)
+    SleepManager->>TimeManager: 4. PauseTimeFlow()
+    Note right of SleepManager: 모든 플레이어가 잠들었는지 확인<br/>(CheckAllPlayerIsLieInBed)
+    alt 모든 플레이어 수면 완료
+        SleepManager->>TimeManager: 5. AdvanceToNextDay()
+        TimeManager-->>SleepManager: 6. 날짜 변경 완료
+        SleepManager->>Player: 7. EndSleep()
+        Player->>Bed: 8. 기상 (침대에서 일어나기)
+    end
 ```
-
-#### **성과 및 발전**
-단순한 시간 흐름 구현을 넘어, 델리게이트를 활용한 이벤트 기반 아키텍처를 구축하여 시스템 간의 의존성을 성공적으로 분리했습니다. 이를 통해 향후 새로운 시간 기반 콘텐츠(예: 특정 시간에만 나타나는 상인, 야간 몬스터 등)를 추가할 때 기존 코드를 수정할 필요 없이 확장할 수 있는 기반을 마련했습니다.
-
-> **[미디어 제안]**
-> - **시퀀스 다이어그램**: 플레이어가 침대와 상호작용했을 때 `ABed` -> `USleepManager` -> `ATimeManager` 순으로 호출이 일어나는 과정을 보여주는 다이어그램.
-> - **스크린샷**: 주야간 사이클에 따라 게임 월드의 광원과 하늘이 변화하는 모습을 담은 스크린샷 (아침, 점심, 저녁, 밤).
 
 ### 3.2. 농사 시스템
 
@@ -68,34 +71,64 @@ public:
   - **물주기 및 성장**: `TimeManager`와 연동하여, 플레이어가 잠을 잘 때 성장 시간이 계산되도록 했습니다. 물을 준 상태(`bIsGetWater`)에서는 더 좋은 등급의 아이템을 수확할 확률이 높아지는 등 상호작용의 깊이를 더했습니다.
   - **네트워크 동기화**: `CurrentState` 변수가 변경될 때 `OnRep_UpdateState` 함수가 호출되어 모든 클라이언트에서 농작물의 외형이 실시간으로 변경되도록 구현했습니다.
 
-#### **코드 예시: 농작물 상태 정의 및 동기화**
-```cpp
-// BaseCrop.h
-UENUM(BlueprintType)
-enum class ECropState :uint8
-{
-    None = 0,
-    Seedling = 1,
-    Sprout = 2,
-    Stem = 3,
-    Mature = 4
-};
+#### **클래스 다이어그램**
 
-// ...
-UPROPERTY(ReplicatedUsing = OnRep_UpdateState, EditAnywhere, Category = Grow)
-ECropState CurrentState = ECropState::None;
+```mermaid
+classDiagram
+    class UFarmingManager {
+        +TMap~FCropData~ CropDataMap
+        +GetCropDataByID(int cropID) FCropData
+    }
 
-UFUNCTION()
-void OnRep_UpdateState();
+    class ABaseCrop {
+        <<Actor>>
+        +ECropState CurrentState
+        +bool bIsGetWater
+        +OnRep_UpdateState() void
+        +Grow(float elapsedTime) void
+    }
+
+    class ARiceCrop {
+        <<Actor>>
+        +Inherits ABaseCrop
+    }
+
+    class AEggplantCrop {
+        <<Actor>>
+        +Inherits ABaseCrop
+    }
+    
+    class AHoedField {
+        <<Actor>>
+        +bool IsWet
+        -ABaseCrop* PlantedCrop
+        +PlantCrop(int cropID) void
+        +WaterField() void
+    }
+
+    UFarmingManager ..> ABaseCrop : "Manages Data For"
+    AHoedField "1" *-- "0..1" ABaseCrop : Plants
+    ABaseCrop <|-- ARiceCrop
+    ABaseCrop <|-- AEggplantCrop
 ```
 
-#### **성과 및 발전**
-정적 데이터 관리자와 상태 패턴을 적용하여 농사 시스템의 유지보수성과 확장성을 크게 향상시켰습니다. 특히, 모든 로직을 네트워크 환경을 고려하여 설계했기 때문에 여러 플레이어가 동시에 자신의 밭을 문제없이 가꿀 수 있는 안정적인 멀티플레이 경험을 제공합니다.
+#### **상태 다이어그램**
 
-> **[미디어 제안]**
-> - **클래스 다이어그램**: `UFarmingManager`와 `ABaseCrop`의 관계, `ABaseCrop`을 상속받는 다양한 실제 작물 클래스들을 보여주는 다이어그램.
-> - **상태 다이어그램**: `ECropState`의 각 상태(씨앗 -> 새싹 -> 줄기 -> 다 자람)와 상태 전이 조건(시간, 물주기)을 나타내는 다이어그램.
-> - **데모 영상**: 씨앗을 심고, 물을 주고, 시간이 흘러 작물이 자라나고, 최종적으로 수확하는 전체 과정을 담은 짧은 게임 플레이 영상.
+```mermaid
+stateDiagram-v2
+    [*] --> Tilled : 괭이로 경작
+    
+    state Growth {
+        Seedling --> Sprout : 하루 경과 [물을 줌]
+        Sprout --> Stem : 하루 경과 [물을 줌]
+        Stem --> Mature : 하루 경과 [물을 줌]
+    }
+
+    Tilled --> Seedling : 씨앗 심기 (GA_Seeding)
+    Seedling : 물을 줄 수 있음 (GA_Watering)
+    Mature --> Harvested : 수확 (GA_Harvest)
+    Harvested --> Tilled : 수확 완료 후
+```
 
 ### 3.3. 거래 시스템 (Trading System)
 
@@ -111,24 +144,48 @@ void OnRep_UpdateState();
   - **시간 연동 거래 제한**: `TimeManager`의 시간대 변경 델리게이트(`FOnContentRestrictionTimeReached`)에 응답하여 특정 시간에는 거래가 불가능하도록 `CanInteractive` 플래그를 제어합니다. 이는 시스템 간의 직접적인 참조 없이 이벤트 기반으로 상호작용하는 좋은 예시입니다.
   - **상호작용 및 UI**: 플레이어가 `ATradingNPC`와 상호작용하면, 거래를 위한 UI를 열어주는 역할을 수행하도록 구현했습니다.
 
-#### **코드 예시: 시간 연동을 위한 NPC 함수**
-```cpp
-// TradingNPC.h
-// TimeManager로부터 특정 시간대에 도달했다는 이벤트를 받기 위한 함수
-UFUNCTION()
-void TradingRestrictByTimeReached();
+#### **클래스 다이어그램**
+```mermaid
+classDiagram
+    class APlayerCharacter {
+        +Interact()
+    }
+    class ATradingNPC {
+        <<Actor>>
+        +bool CanInteractive
+        +OnInteractive(AActor* Causer)
+        +TradingRestrictByTimeReached()
+        +TradingRestrictCancelByTimeReached()
+    }
+    class ATimeManager {
+        <<Actor>>
+        +FOnContentRestrictionTimeReached OnContentRestrictionTimeReached
+        +FOnContentRestrictionCancelTimeReached OnContentRestrictionCancelTimeReached
+    }
+    class UTradingManager {
+        <<Static>>
+        -TArray~FProductStruct~ ProductData
+        +GetProductPriceById(uint32 Id) uint32
+        +GetProductDataById(uint32 Id) FProductStruct
+    }
+    class FProductStruct {
+        <<Struct>>
+        +uint32 ProductId
+        +uint32 Price
+        +FString Name
+    }
+    class UTradingWidget {
+        <<UI>>
+        +DisplayProducts()
+        +SellItem(uint32 ItemId)
+    }
 
-// TimeManager로부터 특정 시간대가 해제되었다는 이벤트를 받기 위한 함수
-UFUNCTION()
-void TradingRestrictCancelByTimeReached();
+    APlayerCharacter --|> ATradingNPC : Interacts with
+    ATradingNPC ..> UTradingWidget : Opens
+    UTradingWidget ..> UTradingManager : Gets Product Data
+    UTradingManager "1" *-- "*" FProductStruct : Manages
+    ATimeManager --|> ATradingNPC : Notifies (via Delegates)
 ```
-
-#### **성과 및 발전**
-농사 시스템과 마찬가지로 데이터 기반 설계를 채택하여 유지보수성과 확장성을 확보했습니다. 특히 `TimeManager`와 연동하여 상점의 영업시간을 구현함으로써, 게임 월드에 깊이와 현실감을 더했습니다. 이는 각 시스템이 독립적으로 동작하면서도, 델리게이트를 통해 유기적으로 연결되는 잘 설계된 아키텍처의 결과물입니다.
-
-> **[미디어 제안]**
-> - **클래스 다이어그램**: `Player`가 `ATradingNPC`와 상호작용하고, `ATradingNPC`가 `TimeManager`의 이벤트에 응답하며, `UTradingManager`에서 상품 데이터를 조회하는 전체적인 흐름을 보여주는 다이어그램.
-> - **스크린샷**: 플레이어가 NPC와 상호작용하여 상품을 판매하는 거래 UI 스크린샷.
 
 ### 3.4. 로비 및 스팀(Steam) 연동 시스템
 
@@ -142,27 +199,30 @@ void TradingRestrictCancelByTimeReached();
 
 - **`AMainGameMode`**: 로비 맵의 게임 모드로서, 플레이어의 접속을 처리하고 모든 플레이어가 준비되면 메인 게임 맵으로 이동(`ServerTravel`)시키는 역할을 담당합니다.
 
-#### **코드 예시: 세션 생성 요청**
-```cpp
-// ISGGameInstance.cpp (가상 코드)
-void UISGGameInstance::CreateSession()
-{
-    IOnlineSessionPtr SessionInterface = Online::GetSessionInterface(GetWorld());
-    if (SessionInterface.IsValid())
-    {
-        FOnlineSessionSettings SessionSettings;
-        // ... 세션 설정 ...
-        SessionInterface->CreateSession(0, FName("GameSession"), SessionSettings);
-    }
-}
+#### **세션 연결 플로우차트**
+```mermaid
+flowchart TD
+    A[게임 시작] --> B{메인 메뉴};
+    B --> C[멀티플레이 클릭];
+    C --> D{세션 목록 UI};
+    D --> E[1. 방 만들기 클릭];
+    D --> F[2. 빠른 참가 클릭];
+    
+    subgraph "세션 생성"
+        E --> G[CreateSession];
+        G --> H[메인 게임 맵으로 이동];
+    end
+    
+    subgraph "세션 참가"
+        F --> I[검색된 세션 리스트 확인];
+        I --> J{참가 가능한 세션이 있는가?};
+        J -- Yes --> K[첫 번째 세션에 JoinSession];
+        K --> H;
+        J -- No --> D;
+    end
+    
+    H --> L[게임 플레이 시작];
 ```
-
-#### **성과 및 발전**
-언리얼 엔진의 `Online Subsystem`에 대한 깊은 이해를 바탕으로 안정적인 스팀 기반 멀티플레이 연결 기능을 구현했습니다. 복잡한 비동기 로직을 콜백과 델리게이트를 통해 명확하게 처리하여, 플레이어가 친구의 게임에 원활하게 참여하고 함께 플레이할 수 있는 환경을 구축했습니다.
-
-> **[미디어 제안]**
-> - **플로우차트**: "호스트가 방 생성" -> "친구가 스팀 오버레이에서 초대 수락" -> "게임 참가" -> "로비에서 캐릭터 확인" -> "게임 시작"으로 이어지는 전체 과정을 보여주는 플로우차트.
-> - **스크린샷**: 게임 내에서 세션을 생성하거나 친구 목록을 보여주는 로비 UI 스크린샷.
 
 ---
 
